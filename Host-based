@@ -1,0 +1,108 @@
+#PRACTICAL TEST
+
+#Assign Variables
+
+network='192.168.6.0/24'
+in_int="ens33"
+# FLUSH ALL
+IPT='iptables'
+
+$IPT -F
+$IPT -F -t nat
+$IPT -X
+
+#Default Policies
+$IPT -P INPUT DROP
+$IPT -P OUTPUT DROP
+$IPT -P FORWARD DROP
+
+#Allow previously established connections to continue uninterrupted
+#$IPT -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+#$IPT -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+ 
+
+#1. 
+#Can create IPset for trusted MAC. 
+
+ipset destroy trusted
+ipset create trusted bitmap:ip,mac range 192.168.6.0/24
+ipset add trusted 192.168.6.220,52:54:00:50:01:01
+ipset add trusted 192.168.6.221,52:54:00:50:01:02
+ipset add trusted 192.168.6.222,52:54:00:50:01:03
+ipset add trusted 192.168.6.223,52:54:00:50:01:03
+
+#Can create IPset for Routers
+ipset destroy routers
+ipset create routers hash:ip  
+ipset add routers 172.16.6.1
+ipset add routers 192.168.6.1
+ipset add routers 172.16.199.1
+ipset add routers 172.16.99.1
+
+echo "1"
+#Create IPset for Networks A,L and Internet
+ipset destroy ALinternet
+ipset create ALinternet hash:net
+ipset add ALinternet 192.168.99.0/24
+ipset add ALinternet 192.168.199.0/24
+ipset add ALinternet 172.16.199.0/16
+ipset add ALinternet 172.16.99.0/16
+echo "2"
+
+#DHCP rules
+#$IPT -N udp_packets
+#$IPT -A udp_packets -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m set --match-set trusted src -j ACCEPT
+$IPT -A INPUT -i $in_int -p udp --dport 67 -d 192.168.6.57 --sport 68 -m set --match-set trusted src  -j ACCEPT
+$IPT -A INPUT -i $in_int -p udp --dport 67 -d 192.168.6.57 --sport 68 -m mac --mac-source 52:54:00:50:01:01  -j ACCEPT
+#$IPT -A INPUT -i $in_int -p udp --dport 67 -d 192.168.6.57 -m mac --mac-source 52:54:00:50:01:03  -j ACCEPT
+#$IPT -A INPUT -i $in_int -p udp --dport 67 -d 192.168.6.57 -m mac --mac-source 52:54:00:50:01:04  -j ACCEPT
+
+#2. Reject and Log any other DHCP lease request not coming from the above given MAC addresses. 
+
+
+$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m set ! --match-set trusted src -j LOG --log-prefix "Invalid Host" --log-ip-options
+$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m set ! --match-set trusted src -j REJECT
+
+#$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m mac ! --mac-source  52:54:00:50:01:02 -j LOG --log-prefix "Invalid Host" --log-ip-options
+#$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m mac ! --mac-source  52:54:00:50:01:02 -j REJECT
+
+#$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m mac ! --mac-source  52:54:00:50:01:03 -j LOG --log-prefix "Invalid Host" --log-ip-options
+#$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m mac ! --mac-source  52:54:00:50:01:03 -j REJECT
+
+#$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m mac ! --mac-source  52:54:00:50:01:04 -j LOG --log-prefix "Invalid Host" --log-ip-options
+#$IPT -A INPUT -i $in_int -p udp --dport 68 -d 192.168.6.57 --sport 67 -m mac ! --mac-source  52:54:00:50:01:04 -j REJECT
+
+#3. Log and Reject any PING packet from network devices in the local network except from the Linux Router X, Linux Router A, and Linux Router L.
+
+
+$IPT -A INPUT -p icmp --icmp-type echo-request -m set --match-set routers src -m conntrack --ctstate NEW -j ACCEPT
+$IPT -A OUTPUT -p icmp -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+$IPT -A INPUT -p icmp --icmp-type echo-request -m set ! --match-set routers src -j LOG --log-prefix "Block Ping Except Router "
+
+$IPT -A INPUT -p icmp --icmp-type echo-request -m set ! --match-set routers src -j REJECT
+
+
+#4. Allow SSH connection requests from the Linux Router A, Linux Router L, and Linux Router X. 
+
+
+$IPT -A INPUT -p tcp --dport 22 -m set --match-set routers src -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+
+#5. Allow local process (processes on the local Linux machine) to access all other local services. 
+
+#Allow Loopback Access
+$IPT -I INPUT -i lo -j ACCEPT
+$IPT -I OUTPUT -o lo -j ACCEPT
+
+#6. Drop any other network access from the A network, L network, and the Internet. 
+
+$IPT -A INPUT -m set --match-set ALinternet src -j DROP
+
+
+#7. Reject all other access from local network.
+
+$IPT -A INPUT -s 192.168.6.0/24 -j REJECT
+
+
+
+
+ip r a 172.16.99.0 dev ens33
