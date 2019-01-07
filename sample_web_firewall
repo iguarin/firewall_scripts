@@ -1,0 +1,62 @@
+#!/bin/bash
+
+IPT=iptables
+
+#Default Chain Policies
+
+$IPT -P INPUT DROP
+$IPT -P FORWARD DROP
+$IPT -P OUTPUT DROP
+
+#Flush
+$IPT -F 
+$IPT -X
+$IPT -t nat -F
+$IPT -t filter -F
+$IPT -t raw -F
+$IPT -t mangle -F
+$IPT -t nat -X
+
+#ipset 
+
+ipset create workstation hash:ip
+ipset add workstation 192.168.6.205
+ipset add workstation 192.168.6.105 
+
+#
+#$IPT -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+#$IPT -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+$IPT -A INPUT -i lo -j ACCEPT
+#$IPT -A INPUT -m state --state NEW,ESTABLISHED -m tcp -p tcp --dport 80 -j ACCEPT
+#$IPT -A INPUT -m state --state NEW -m tcp -p tcp --dport 443 -j ACCEPT
+
+
+#Allow SSH from only one host
+$IPT -A INPUT -p tcp --dport 22 -m set --match-set workstation src -m state --state NEW,ESTABLISHED -j ACCEPT
+$IPT -A OUTPUT -p tcp --sport 22 -m state --state ESTABLISHED -j ACCEPT
+
+
+#HTTP/HTTPS Traffic
+#$IPT -A INPUT -m state --state NEW -m tcp -p tcp --dport 80 -j ACCEPT
+$IPT -A OUTPUT -m state --state ESTABLISHED -p tcp --sport 80 -j ACCEPT
+#$IPT -A INPUT -m state --state NEW -m tcp -p tcp --dport 443 -j ACCEPT
+$IPT -A OUTPUT -m state --state ESTABLISHED -p tcp --sport 443 -j ACCEPT
+
+#Allow Loopback Access
+$IPT -A INPUT -i lo -j ACCEPT 
+$IPT -A OUTPUT -o lo -j ACCEPT
+
+#Prevent DoS Attack 
+#$IPT -A INPUT -p tcp --dport 80 -m limit --limit 25/minute --limit-burst 100 -j ACCEPT 
+#$IPT -A INPUT -p tcp --dport 443 -m limit --limit 25/minute --limit-burst 100 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 --match hashlimit --hashlimit-mode srcip --hashlimit-upto 10/sec --hashlimit-burst 20/sec --hashlimit-name conn_rate_limit -j ACCEPT
+
+#Allow ping test
+$IPT -A OUTPUT -p icmp --icmp-type 8 -j ACCEPT
+$IPT -A INPUT -p icmp --icmp-type 0 -j ACCEPT
+ 
+# Limit the number of incoming tcp connections
+# Interface 0 incoming syn-flood protection
+
+
+iptables -A OUTPUT -p icmp -j ACCEPT
